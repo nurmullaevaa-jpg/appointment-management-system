@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Записи</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; }
+        h1 { color: #333; }
+        a { color: #06c; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background: #f5f5f5; }
+        form { margin-top: 20px; padding: 15px; background: #f9f9f9; border-radius: 4px; }
+        label { display: inline-block; width: 140px; }
+        input, select { padding: 6px; margin: 4px 0; }
+        button { padding: 8px 16px; margin-top: 10px; margin-right: 8px; cursor: pointer; border: none; border-radius: 4px; }
+        button.primary { background: #333; color: #fff; }
+        button.primary:hover { background: #555; }
+        button.cancel { background: #dc3545; color: #fff; }
+        button.complete { background: #28a745; color: #fff; }
+        .msg { margin-top: 10px; padding: 8px; border-radius: 4px; }
+        .msg.ok { background: #d4edda; color: #155724; }
+        .msg.err { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <p><a href="index.html">← На главную</a></p>
+    <h1>Записи на услуги</h1>
+
+    <form id="form">
+        <div><label>Клиент:</label> <select name="clientId" required></select></div>
+        <div><label>Услуга:</label> <select name="serviceId" required></select></div>
+        <div><label>Дата:</label> <input type="date" name="appointmentDate" required></div>
+        <div><label>Время:</label> <input type="time" name="appointmentTime" required step="1"></div>
+        <button type="submit" class="primary">Записать</button>
+    </form>
+    <div id="msg"></div>
+
+    <h2>Список записей</h2>
+    <table>
+        <thead>
+            <tr><th>ID</th><th>Клиент ID</th><th>Услуга ID</th><th>Дата</th><th>Время</th><th>Статус</th><th>Действия</th></tr>
+        </thead>
+        <tbody id="list"></tbody>
+    </table>
+
+    <script>
+        const msg = document.getElementById('msg');
+        const list = document.getElementById('list');
+        const form = document.getElementById('form');
+        const clientSelect = form.querySelector('[name="clientId"]');
+        const serviceSelect = form.querySelector('[name="serviceId"]');
+
+        function showMsg(text, isError) {
+            msg.className = 'msg ' + (isError ? 'err' : 'ok');
+            msg.textContent = text;
+        }
+
+        function loadOptions() {
+            fetch('/api/clients').then(r => r.json()).then(data => {
+                if (!Array.isArray(data)) {
+                    clientSelect.innerHTML = '<option value="">Ошибка загрузки клиентов</option>';
+                    return;
+                }
+                clientSelect.innerHTML = '<option value="">Выберите клиента</option>' +
+                    data.map(c => '<option value="' + c.id + '">' + c.name + ' (#' + c.id + ')</option>').join('');
+            });
+            fetch('/api/services').then(r => r.json()).then(data => {
+                if (!Array.isArray(data)) {
+                    serviceSelect.innerHTML = '<option value="">Ошибка загрузки услуг</option>';
+                    return;
+                }
+                serviceSelect.innerHTML = '<option value="">Выберите услугу</option>' +
+                    data.map(s => '<option value="' + s.id + '">' + s.name + ' (#' + s.id + ')</option>').join('');
+            });
+        }
+
+        function loadAppointments() {
+            fetch('/api/appointments')
+                .then(r => r.json())
+                .then(data => {
+                    if (!Array.isArray(data)) {
+                        showMsg(data.error || 'Ошибка загрузки', true);
+                        list.innerHTML = '<tr><td colspan="7">Нет данных</td></tr>';
+                        return;
+                    }
+                    list.innerHTML = data.map(a => {
+                        let actions = '';
+                        if (a.status === 'BOOKED') {
+                            actions = '<button class="cancel" onclick="cancel(' + a.id + ')">Отменить</button> ' +
+                                '<button class="complete" onclick="complete(' + a.id + ')">Выполнено</button>';
+                        }
+                        return '<tr><td>' + a.id + '</td><td>' + a.clientId + '</td><td>' + a.serviceId + '</td><td>' +
+                            a.appointmentDate + '</td><td>' + a.appointmentTime + '</td><td>' + a.status + '</td><td>' + actions + '</td></tr>';
+                    }).join('') || '<tr><td colspan="7">Нет записей</td></tr>';
+                })
+                .catch(e => showMsg('Ошибка загрузки: ' + e.message, true));
+        }
+
+        function cancel(id) {
+            fetch('/api/appointments/' + id + '/cancel', { method: 'POST' })
+                .then(r => r.json().then(d => {
+                    if (r.ok) { showMsg('Запись отменена', false); } else { showMsg(d.error || 'Ошибка', true); }
+                    loadAppointments();
+                }))
+                .catch(e => showMsg('Ошибка: ' + e.message, true));
+        }
+
+        function complete(id) {
+            fetch('/api/appointments/' + id + '/complete', { method: 'POST' })
+                .then(r => r.json().then(d => {
+                    if (r.ok) { showMsg('Запись выполнена', false); } else { showMsg(d.error || 'Ошибка', true); }
+                    loadAppointments();
+                }))
+                .catch(e => showMsg('Ошибка: ' + e.message, true));
+        }
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const fd = new FormData(form);
+            const date = fd.get('appointmentDate');
+            const time = fd.get('appointmentTime');
+            const timeStr = time.length === 5 ? time + ':00' : time;
+            const body = {
+                clientId: parseInt(clientSelect.value, 10),
+                serviceId: parseInt(serviceSelect.value, 10),
+                appointmentDate: date,
+                appointmentTime: timeStr
+            };
+            fetch('/api/appointments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showMsg('Запись создана, ID: ' + data.id, false);
+                    form.reset();
+                    loadAppointments();
+                } else {
+                    showMsg(data.error || 'Ошибка', true);
+                }
+            })
+            .catch(err => showMsg('Ошибка: ' + err.message, true));
+        });
+
+        loadOptions();
+        loadAppointments();
+    </script>
+</body>
+</html>
